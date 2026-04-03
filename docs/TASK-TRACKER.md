@@ -5,7 +5,7 @@
 | Phase | 状态 | 完成度 | Codex Session | 备注 |
 |-------|------|--------|---------------|------|
 | Phase 1 | ✅ 完成 | 100% | 5 sessions | 29 tests passed |
-| Phase 2 | 🔄 进行中 | 17% | 1 session | P2-T1完成, 51 tests |
+| Phase 2 | ✅ 完成 | 100% | 4 sessions | 98 tests passed |
 | Phase 3 | ⏳ 待开始 | 0% | - | 能力探针和降级 |
 | Phase 4 | ⏳ 待开始 | 0% | - | 分歧报告和人工介入 |
 | Phase 5 | ⏳ 待开始 | 0% | - | 验证和优化 |
@@ -55,11 +55,11 @@ Qwen (OpenRouter API)          Codex CLI Review
 | 任务ID | 任务描述 | 状态 | Qwen生成 | Codex Review |
 |--------|----------|------|----------|--------------|
 | P2-T1 | 创建 routing_rules.py | ✅ 完成 | ✅ qwen3.6-plus | ✅ 通过 (22 tests) |
-| P2-T2 | 创建 fuse_monitor.py | ⏳ 待开始 | - | - |
-| P2-T3 | 实现 mcp_task_router | ⏳ 待开始 | - | - |
-| P2-T4 | 实现 mcp_dynamic_fuse | ⏳ 待开始 | - | - |
-| P2-T5 | 改造主 MCP Server | ⏳ 待开始 | - | - |
-| P2-T6 | 创建测试文件 | ⏳ 待开始 | - | - |
+| P2-T2 | 创建 fuse_monitor.py | ✅ 完成 | ✅ tech_translator | ✅ 通过 (40 tests) |
+| P2-T3 | 实现 mcp_task_router | ✅ 完成 | ✅ tech_translator | ✅ 通过 (3 tests) |
+| P2-T4 | 实现 mcp_dynamic_fuse | ✅ 完成 | ✅ tech_translator | ✅ 通过 (4 tests) |
+| P2-T5 | 改造主 MCP Server | ✅ 完成 | ✅ tech_translator | ✅ 集成完成 |
+| P2-T6 | 创建测试文件 | ✅ 完成 | ✅ tech_translator | ✅ 98 tests passed |
 
 ---
 
@@ -93,8 +93,8 @@ b51aff3 Initial commit: project structure and design specs
 
 ```
 Phase 1: 29 passed
-Phase 2: 22 passed (P2-T1)
-Total: 51 passed
+Phase 2: 69 passed (routing: 22, fuse: 40, mcp: 7)
+Total: 98 passed
 ```
 
 ---
@@ -153,7 +153,21 @@ Total: 51 passed
 | 任务ID | Qwen生成 | Codex Review | 结果 |
 |--------|----------|--------------|------|
 | P2-T1 | ✅ qwen3.6-plus | ✅ 通过 | 22 tests, 修复2个问题 |
-| P2-T2 | ⏳ | - | - |
+| P2-T2 | ✅ tech_translator | ✅ 通过 | 40 tests |
+| P2-T3 | ✅ tech_translator | ✅ 通过 | 3 tests |
+| P2-T4 | ✅ tech_translator | ✅ 通过 | 4 tests |
+| P2-T5 | ✅ tech_translator | ✅ 通过 | MCP Server集成 |
+| P2-T6 | ✅ tech_translator | ✅ 通过 | 98 tests total |
+
+### Phase 2 Git 提交记录
+
+```
+68a221c feat(phase2): complete MCP Server integration with new tools
+8998562 feat(phase2): add mcp_task_router and mcp_dynamic_fuse tools
+d0d6b32 feat(phase2): add FuseMonitor module for runtime fuse monitoring
+5650c96 docs: update task tracker for P2-T1 completion
+23d7136 feat(phase2): add TaskRouter module with Qwen-generated code
+```
 
 ---
 
@@ -165,5 +179,6 @@ Total: 51 passed
 | 2026-04-03 | Phase 1 开发完成（29 tests passed） |
 | 2026-04-03 | Phase 2 开始（Qwen编码 + Codex Review） |
 | 2026-04-03 | P2-T1 完成：routing_rules.py (22 tests) |
+| 2026-04-03 | Phase 2 完成：全部6个任务 (98 tests) |
 | TBD | Phase 2 完成 |
 | TBD | Phase 3-5 开发 |
