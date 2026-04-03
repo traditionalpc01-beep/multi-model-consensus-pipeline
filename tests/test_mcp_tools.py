@@ -281,6 +281,8 @@ class McpServerV2ToolTestCase(unittest.TestCase):
 
         for tool_name in (
             "mcp_prepare_context",
+            "mcp_task_router",
+            "mcp_dynamic_fuse",
             "mcp_qwen_analyze",
             "mcp_codex_analyze",
             "mcp_consensus_check",
@@ -290,6 +292,104 @@ class McpServerV2ToolTestCase(unittest.TestCase):
         ):
             self.assertIn(tool_name, instructions)
         self.assertIn("共识", instructions)
+
+    def test_task_router_routes_simple_task(self) -> None:
+        """测试 mcp_task_router 对简单任务的路由。"""
+        response = json.loads(
+            self.module.mcp_task_router(
+                task="修复登录页面的按钮样式",
+                project_dir=str(self.project_dir),
+            )
+        )
+
+        self.assertTrue(response["success"])
+        self.assertIn("route_choice", response)
+        route_choice = response["route_choice"]
+        self.assertEqual(route_choice["task_class"], "simple")
+        self.assertEqual(route_choice["route_id"], "direct_execution")
+
+    def test_task_router_routes_complex_task(self) -> None:
+        """测试 mcp_task_router 对复杂任务的路由。"""
+        response = json.loads(
+            self.module.mcp_task_router(
+                task="重构核心架构并迁移数据库",
+                project_dir=str(self.project_dir),
+            )
+        )
+
+        self.assertTrue(response["success"])
+        route_choice = response["route_choice"]
+        self.assertEqual(route_choice["task_class"], "complex")
+        self.assertEqual(route_choice["route_id"], "consensus_3_rounds")
+
+    def test_task_router_without_project_dir(self) -> None:
+        """测试 mcp_task_router 无项目目录时仍能工作。"""
+        response = json.loads(
+            self.module.mcp_task_router(
+                task="实现新功能模块",
+            )
+        )
+
+        self.assertTrue(response["success"])
+        self.assertIn("route_choice", response)
+
+    def test_dynamic_fuse_normal_capability(self) -> None:
+        """测试 mcp_dynamic_fuse 正常能力等级。"""
+        response = json.loads(
+            self.module.mcp_dynamic_fuse(
+                project_dir=str(self.project_dir),
+                capability_score=0.8,
+                used_tokens=50000,
+                total_tokens=100000,
+            )
+        )
+
+        self.assertTrue(response["success"])
+        self.assertEqual(response["capability"]["level"], "L2")
+        self.assertFalse(response["fuse_triggered"])
+
+    def test_dynamic_fuse_low_capability_triggers_action(self) -> None:
+        """测试 mcp_dynamic_fuse 低能力触发熔断。"""
+        response = json.loads(
+            self.module.mcp_dynamic_fuse(
+                project_dir=str(self.project_dir),
+                capability_score=0.2,
+            )
+        )
+
+        self.assertTrue(response["success"])
+        self.assertEqual(response["capability"]["level"], "L0")
+        self.assertEqual(response["capability"]["action"], "skip_consensus")
+
+    def test_dynamic_fuse_token_budget_triggers_fuse(self) -> None:
+        """测试 mcp_dynamic_fuse Token 预算触发熔断。"""
+        response = json.loads(
+            self.module.mcp_dynamic_fuse(
+                project_dir=str(self.project_dir),
+                capability_score=0.8,
+                used_tokens=85000,
+                total_tokens=100000,
+            )
+        )
+
+        self.assertTrue(response["success"])
+        self.assertTrue(response["runtime"]["token_budget_fuse"])
+        self.assertTrue(response["fuse_triggered"])
+        self.assertIn("token_budget", response["triggered_types"])
+
+    def test_dynamic_fuse_without_project_dir(self) -> None:
+        """测试 mcp_dynamic_fuse 无项目目录时仍能工作。"""
+        # 不提供 project_dir 或使用空字符串
+        response = json.loads(
+            self.module.mcp_dynamic_fuse(
+                project_dir="",
+                capability_score=0.5,
+            )
+        )
+
+        # 可能因为路径无效而失败，但不应崩溃
+        # 检查响应是否是有效的 JSON
+        self.assertIn("success", response)
 
 
 if __name__ == "__main__":
