@@ -7,6 +7,7 @@
 | Phase 1 | ✅ 完成 | 100% | 5 sessions | 29 tests passed |
 | Phase 2 | ✅ 完成 | 100% | 4 sessions | 98 tests passed |
 | **Phase 2.5** | ✅ 完成 | 100% | - | 多模型框架 (23 tests) |
+| **Phase 2.6** | ✅ 完成 | 100% | - | 多模型共识讨论 |
 | Phase 3 | ⏳ 待开始 | 0% | - | 能力探针和降级 |
 | Phase 4 | ⏳ 待开始 | 0% | - | 分歧报告和人工介入 |
 | Phase 5 | ⏳ 待开始 | 0% | - | 验证和优化 |
@@ -162,6 +163,60 @@ Total:     143 tests passed
 
 ---
 
+## Phase 2.6 详情（已完成）
+
+### 多模型共识讨论
+
+**参与模型**: LongCat Thinking, LongCat Lite, Qwen
+
+**讨论轮次**: 2轮
+
+**共识状态**: ✅ 完全共识
+
+### 第一轮讨论结果
+
+| 模型 | 可行性 | 主要关切点 |
+|------|--------|-----------|
+| LongCat Thinking | high | 共识判定逻辑、熔断机制、配额限制 |
+| LongCat Lite | high | 高并发稳定性、降级策略、优先级定义 |
+| Qwen | medium | 优先级语义、共识判定、成本控制 |
+
+### 第二轮共识结论
+
+| 维度 | 结果 |
+|------|------|
+| goal_aligned | ✅ True |
+| constraints_aligned | ✅ True |
+| priority_aligned | ✅ True |
+| **共识达成** | ✅ 完全共识 |
+
+### 关键决策
+
+1. **共识算法**: 加权评分 (weighted_score)
+   - 质量(40%) + 成本(30%) + 延迟(20%) + 置信度(10%)
+
+2. **优先级定义**: 枚举 (CRITICAL/HIGH/MEDIUM/LOW)
+   - 映射到数值: CRITICAL=10, HIGH=30, MEDIUM=50, LOW=70
+
+3. **熔断降级**: 三件套
+   - 滑动窗口熔断器 + 健康检查探针 + 多级降级策略
+
+### 熔断降级策略（四级）
+
+| Level | 触发条件 | 动作 |
+|-------|----------|------|
+| L1 | 超时控制 | 切换备用模型 |
+| L2 | 并行失败 | 降级串行调用 |
+| L3 | 多模型不可用 | 缓存兜底 |
+| L4 | 系统级故障 | 静态响应 |
+
+### 相关文档
+
+- `docs/consensus-v2.5-review.md` - 第一轮讨论记录
+- `docs/consensus-round2.md` - 第二轮共识结论
+
+---
+
 ## Phase 3-5 计划（待开始）
 
 ### Phase 3: 能力探针和降级（预估 2h）
@@ -238,7 +293,6 @@ d0d6b32 feat(phase2): add FuseMonitor module for runtime fuse monitoring
 
 | 日期 | 事件 |
 |------|------|
-| 2026-04-03 | 三轮共识讨论完成（100%共识） |
 | 2026-04-03 | Phase 1 开发完成（29 tests passed） |
 | 2026-04-03 | Phase 2 开始（Qwen编码 + Codex Review） |
 | 2026-04-03 | P2-T1 完成：routing_rules.py (22 tests) |
@@ -246,5 +300,7 @@ d0d6b32 feat(phase2): add FuseMonitor module for runtime fuse monitoring
 | 2026-04-03 | LongCat API 接入成功 |
 | 2026-04-03 | **架构升级：多模型共识框架** |
 | 2026-04-03 | Phase 2.5 完成：ModelRegistry (143 tests) |
-| TBD | Phase 2 完成 |
-| TBD | Phase 3-5 开发 |
+| 2026-04-03 | **Phase 2.6 完成：两轮多模型共识讨论** |
+| 2026-04-03 | - 第一轮：识别关切点（共识判定、熔断、优先级） |
+| 2026-04-03 | - 第二轮：达成完全共识（加权评分+枚举优先级） |
+| TBD | Phase 3 开发：能力探针和降级机制 |
