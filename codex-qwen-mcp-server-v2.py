@@ -30,6 +30,19 @@ from schema_validator import SchemaValidationError, validate_output
 from state_store import StateStore
 from workflow_state import InvalidStateTransitionError, WorkflowStateMachine
 
+# Phase 2 模块导入
+try:
+    from src.routing_rules import TaskRouter, route_task
+except ImportError:
+    TaskRouter = None  # type: ignore
+    route_task = None  # type: ignore
+
+try:
+    from src.fuse_monitor import FuseMonitor, FUSE_RULES
+except ImportError:
+    FuseMonitor = None  # type: ignore
+    FUSE_RULES = {}  # type: ignore
+
 
 CODEX_CLI_PATH = os.environ.get("CODEX_CLI_PATH", os.environ.get("CODEX_NODE_PATH", "codex"))
 CODEX_TIMEOUT = int(os.environ.get("CODEX_TIMEOUT", "600"))
@@ -57,15 +70,17 @@ MCP_INSTRUCTIONS = (
     "Codex-Qwen MCP server for the V2 consensus/共识 workflow.\n\n"
     "Tools:\n"
     "1. mcp_prepare_context - initialize state, collect context, and choose a deterministic route.\n"
-    "2. mcp_qwen_analyze - run Qwen analysis and validate the result against analyze_output schema.\n"
-    "3. mcp_codex_analyze - run Codex analysis and validate the result against analyze_output schema.\n"
-    "4. mcp_consensus_check - compare the two analyses, advance the workflow state, and store consensus evidence.\n"
-    "5. mcp_merge_proposals - merge aligned evidence into a final plan payload.\n"
-    "6. mcp_joint_review - normalize review signals and drive the review/fix/completion states.\n"
-    "7. mcp_audit_log - append a structured audit event.\n\n"
+    "2. mcp_task_router - route task based on keywords (simple/moderate/complex).\n"
+    "3. mcp_dynamic_fuse - monitor runtime limits and trigger fuse actions.\n"
+    "4. mcp_qwen_analyze - run Qwen analysis and validate the result against analyze_output schema.\n"
+    "5. mcp_codex_analyze - run Codex analysis and validate the result against analyze_output schema.\n"
+    "6. mcp_consensus_check - compare the two analyses, advance the workflow state, and store consensus evidence.\n"
+    "7. mcp_merge_proposals - merge aligned evidence into a final plan payload.\n"
+    "8. mcp_joint_review - normalize review signals and drive the review/fix/completion states.\n"
+    "9. mcp_audit_log - append a structured audit event.\n\n"
     "Workflow:\n"
-    "mcp_prepare_context -> mcp_qwen_analyze + mcp_codex_analyze -> mcp_consensus_check\n"
-    "-> mcp_merge_proposals -> mcp_joint_review -> mcp_audit_log.\n"
+    "mcp_prepare_context -> mcp_task_router -> [mcp_dynamic_fuse] -> mcp_qwen_analyze + mcp_codex_analyze\n"
+    "-> mcp_consensus_check -> mcp_merge_proposals -> mcp_joint_review -> mcp_audit_log.\n"
     "The server owns routing, schema validation, workflow state transitions, and persisted audit history."
 )
 
@@ -647,6 +662,146 @@ def mcp_audit_log(project_dir: str, event: str, payload: str = "") -> str:
         _save_state(store, machine, state)
         entry = _append_audit(store, machine, event, payload_data)
         return _json_dumps(entry)
+    except Exception as error:
+        return _structured_error_response(error)
+
+
+@mcp.tool()
+def mcp_task_router(task: str, project_dir: str = "") -> str:
+    """
+    任务路由工具。
+    
+    根据任务描述自动分级路由到：
+    - simple -> direct_execution
+    - moderate -> consensus_1_round
+    - complex -> consensus_3_rounds
+    
+    Args:
+        task: 任务描述文本。
+        project_dir: 项目目录（可选，用于状态记录）。
+    
+    Returns:
+        JSON 格式的路由结果。
+    """
+    try:
+        if TaskRouter is None:
+            # 回退到内置路由
+            route_choice = _classify_task(task)
+            return _json_dumps({
+                "success": True,
+                "router": "fallback",
+                "route_choice": route_choice,
+            })
+        
+        router = TaskRouter()
+        result = router.route(task)
+        
+        # 如果有项目目录，记录路由决策
+        if project_dir:
+            try:
+                store = StateStore(Path(project_dir))
+                store.append_history({
+                    "event": "task_router",
+                    "task": task,
+                    "route_choice": result,
+                    "timestamp": _utc_now(),
+                })
+            except Exception:
+                pass  # 记录失败不影响路由结果
+        
+        return _json_dumps({
+            "success": True,
+            "router": "TaskRouter",
+            "route_choice": result,
+        })
+    except Exception as error:
+        return _structured_error_response(error)
+
+
+@mcp.tool()
+def mcp_dynamic_fuse(
+    project_dir: str,
+    capability_score: float = 0.8,
+    used_tokens: int = 0,
+    total_tokens: int = 100000,
+    check_runtime: bool = True,
+) -> str:
+    """
+    动态熔断工具。
+    
+    监控运行时指标并触发熔断动作：
+    - 能力等级：L0/L1/L2
+    - Schema 失败次数
+    - 延迟超时
+    - Token 预算
+    
+    Args:
+        project_dir: 项目目录。
+        capability_score: 能力分数 [0, 1]。
+        used_tokens: 已使用 Token 数量。
+        total_tokens: 总 Token 预算。
+        check_runtime: 是否检查运行时限制。
+    
+    Returns:
+        JSON 格式的熔断状态报告。
+    """
+    try:
+        if FuseMonitor is None:
+            # 回退到简单判断
+            should_fuse = capability_score < 0.3
+            return _json_dumps({
+                "success": True,
+                "monitor": "fallback",
+                "should_fuse": should_fuse,
+                "action": "skip_consensus" if should_fuse else "normal_flow",
+            })
+        
+        monitor = FuseMonitor()
+        
+        # 检查能力等级
+        capability_level = monitor.check_capability_level(capability_score)
+        capability_action = monitor.get_capability_action(capability_level)
+        
+        # 综合状态检查
+        status = monitor.check_all_limits(used_tokens, total_tokens)
+        
+        # 构建响应
+        result = {
+            "success": True,
+            "monitor": "FuseMonitor",
+            "capability": {
+                "score": capability_score,
+                "level": capability_level,
+                "action": capability_action,
+            },
+            "runtime": {
+                "elapsed_seconds": status["elapsed_seconds"],
+                "delay_fuse": status["delay_fuse"],
+                "schema_fail_count": status["schema_fail_count"],
+                "schema_fail_fuse": status["schema_fail_fuse"],
+                "error_route_count": status["error_route_count"],
+                "error_route_fuse": status["error_route_fuse"],
+                "token_used": used_tokens,
+                "token_total": total_tokens,
+                "token_budget_fuse": status["token_budget_fuse"],
+            },
+            "fuse_triggered": status["any_fuse_triggered"],
+            "triggered_types": status.get("triggered_types", []),
+            "recommended_action": status.get("recommended_action", capability_action),
+        }
+        
+        # 记录熔断检查
+        try:
+            store = StateStore(Path(project_dir))
+            store.append_history({
+                "event": "dynamic_fuse",
+                "fuse_status": result,
+                "timestamp": _utc_now(),
+            })
+        except Exception:
+            pass  # 记录失败不影响熔断结果
+        
+        return _json_dumps(result)
     except Exception as error:
         return _structured_error_response(error)
 
