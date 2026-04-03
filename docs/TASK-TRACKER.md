@@ -9,9 +9,10 @@
 | **Phase 2.5** | ✅ 完成 | 100% | - | 多模型框架 (23 tests) |
 | **Phase 2.6** | ✅ 完成 | 100% | - | 多模型共识讨论 + 实现 (21 tests) |
 | **Phase 2 Total** | ✅ 完成 | 100% | - | **164 tests passed** |
-| Phase 3 | ⏳ 待开始 | 0% | - | 能力探针和降级 |
-| Phase 4 | ⏳ 待开始 | 0% | - | 分歧报告和人工介入 |
-| Phase 5 | ⏳ 待开始 | 0% | - | 验证和优化 |
+| **Phase 3** | ✅ 完成 | 100% | - | 能力探针和降级 (7 tests) |
+| **Phase 4** | ✅ 完成 | 100% | - | 分歧报告和人工介入 (5 tests) |
+| **Phase 5** | ✅ 完成 | 100% | - | 验证和优化 (7 tests) |
+| **Phase 3-5 Total** | ✅ 完成 | 100% | - | **19 tests passed** |
 
 ## 🏗️ 架构升级
 
@@ -218,7 +219,103 @@ Total:     143 tests passed
 
 ---
 
-## Phase 3-5 计划（待开始）
+## Phase 3-5 详情（已完成）
+
+### Phase 3: 能力探针和降级机制
+
+**核心模块**: `src/capability_probe.py`
+
+**核心功能**:
+- 4个能力测试维度（JSON解析、封闭选项选择、Schema合规、推理）
+- L0/L1/L2能力分级和执行路径选择
+- 能力探测阈值：L2(≥0.80), L1(≥0.50), L0(<0.50)
+- 执行路径：L0→skip_consensus, L1→server_normalization, L2→normal_flow
+
+**关键类/函数**:
+- `CapabilityProbe` - 能力探测器主类
+- `probe_capability()` - 便捷探测函数
+- `get_capability_action()` - 根据分数获取动作
+
+**已创建文件**:
+| 文件 | 行数 | 功能 | 测试覆盖 |
+|------|------|------|----------|
+| src/capability_probe.py | 425 | 能力探测模块 | ✅ 7 tests |
+
+---
+
+### Phase 4: 分歧报告和人工介入
+
+**核心模块**: `src/divergence_reporter.py`
+
+**核心功能**:
+- 4个分析维度（目标理解、约束条件、实现路径、可行性评估）
+- 4级严重程度（CRITICAL/HIGH/MEDIUM/LOW）
+- 人工介入触发逻辑
+- 结构化分歧报告生成
+
+**关键类/函数**:
+- `DivergenceReporter` - 分歧报告生成器
+- `generate_divergence_report()` - 便捷报告生成函数
+- `report_to_dict()` - 报告字典转换
+
+**已创建文件**:
+| 文件 | 行数 | 功能 | 测试覆盖 |
+|------|------|------|----------|
+| src/divergence_reporter.py | 520 | 分歧报告模块 | ✅ 5 tests |
+
+---
+
+### Phase 5: 验证运行器
+
+**核心模块**: `src/verification_runner.py`
+
+**核心功能**:
+- 端到端工作流验证
+- 4个验证步骤（准备、路由、执行、共识）
+- 性能指标收集
+- 验证报告生成与保存
+- 优化建议自动生成
+
+**关键类/函数**:
+- `VerificationRunner` - 验证运行器主类
+- `run_verification()` - 便捷验证函数
+- `report_to_dict()` - 报告字典转换
+
+**已创建文件**:
+| 文件 | 行数 | 功能 | 测试覆盖 |
+|------|------|------|----------|
+| src/verification_runner.py | 528 | 验证运行器模块 | ✅ 7 tests |
+
+---
+
+### Phase 3-5 MCP 工具集成
+
+**新增 MCP 工具**:
+| 工具名称 | 功能描述 |
+|----------|----------|
+| `mcp_capability_probe()` | 能力探测工具 |
+| `mcp_generate_divergence_report()` | 分歧报告工具 |
+| `mcp_run_verification()` | 验证运行器工具 |
+
+**修改文件**:
+| 文件 | 修改内容 |
+|------|----------|
+| codex-qwen-mcp-server-v2.py | 集成 Phase 3-5 模块和工具 |
+
+---
+
+### 测试结果汇总
+
+```
+Phase 3:   7 tests (能力探测)
+Phase 4:   5 tests (分歧报告)
+Phase 5:   7 tests (验证运行器)
+Total:     19 tests passed
+```
+
+---
+
+## Phase 3-5 计划（原始计划）
 
 ### Phase 3: 能力探针和降级（预估 2h）
 
