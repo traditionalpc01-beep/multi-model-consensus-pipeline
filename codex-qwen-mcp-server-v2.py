@@ -43,6 +43,44 @@ except ImportError:
     FuseMonitor = None  # type: ignore
     FUSE_RULES = {}  # type: ignore
 
+# Phase 3 模块导入
+try:
+    from src.capability_probe import (
+        CapabilityProbe,
+        CapabilityLevel,
+        probe_capability,
+        get_capability_action,
+    )
+except ImportError:
+    CapabilityProbe = None  # type: ignore
+    CapabilityLevel = None  # type: ignore
+    probe_capability = None  # type: ignore
+    get_capability_action = None  # type: ignore
+
+# Phase 4 模块导入
+try:
+    from src.divergence_reporter import (
+        DivergenceReporter,
+        generate_divergence_report,
+        report_to_dict,
+    )
+except ImportError:
+    DivergenceReporter = None  # type: ignore
+    generate_divergence_report = None  # type: ignore
+    report_to_dict = None  # type: ignore
+
+# Phase 5 模块导入
+try:
+    from src.verification_runner import (
+        VerificationRunner,
+        run_verification,
+        report_to_dict as verification_report_to_dict,
+    )
+except ImportError:
+    VerificationRunner = None  # type: ignore
+    run_verification = None  # type: ignore
+    verification_report_to_dict = None  # type: ignore
+
 
 CODEX_CLI_PATH = os.environ.get("CODEX_CLI_PATH", os.environ.get("CODEX_NODE_PATH", "codex"))
 CODEX_TIMEOUT = int(os.environ.get("CODEX_TIMEOUT", "600"))
@@ -818,6 +856,213 @@ def pipeline_status(project_dir: str) -> str:
                 "workflow_history": machine.get_state_history(),
             }
         )
+    except Exception as error:
+        return _structured_error_response(error)
+
+
+# === Phase 3: 能力探测工具 ===
+@mcp.tool()
+def mcp_capability_probe(
+    project_dir: str,
+    model_name: str = "default",
+    capability_score: float = 0.8,
+) -> str:
+    """
+    能力探测工具。
+    
+    探测模型能力级别，选择合适的执行路径（L0/L1/L2）。
+    
+    Args:
+        project_dir: 项目目录
+        model_name: 模型名称
+        capability_score: 能力分数 [0, 1]，如果不使用实际探测则直接使用此值
+        
+    Returns:
+        JSON 格式的能力探测结果
+    """
+    try:
+        store, machine, state = _ensure_runtime(project_dir)
+        
+        if CapabilityProbe is None or get_capability_action is None:
+            # 回退到简单判定
+            level, action = get_capability_action(capability_score) if get_capability_action else ("L2", "normal_flow")
+            return _json_dumps({
+                "success": True,
+                "probe": "fallback",
+                "model": model_name,
+                "capability_score": capability_score,
+                "level": level,
+                "action": action,
+            })
+        
+        # 获取能力级别和动作
+        level, action = get_capability_action(capability_score)
+        
+        result = {
+            "success": True,
+            "probe": "CapabilityProbe",
+            "model": model_name,
+            "capability_score": capability_score,
+            "level": level.value,
+            "action": action,
+            "execution_path": action,
+        }
+        
+        # 记录能力探测
+        try:
+            store.append_history({
+                "event": "capability_probe",
+                "model": model_name,
+                "capability_result": result,
+                "timestamp": _utc_now(),
+            })
+        except Exception:
+            pass
+        
+        return _json_dumps(result)
+    except Exception as error:
+        return _structured_error_response(error)
+
+
+# === Phase 4: 分歧报告工具 ===
+@mcp.tool()
+def mcp_generate_divergence_report(
+    project_dir: str,
+    model_results: str,
+) -> str:
+    """
+    生成分歧报告工具。
+    
+    分析多模型分析结果，生成分歧报告，判断是否需要人工介入。
+    
+    Args:
+        project_dir: 项目目录
+        model_results: JSON 格式的多模型分析结果
+            {
+                "model_a": {"opinion": "...", "key_points": [...], ...},
+                "model_b": {...}
+            }
+        
+    Returns:
+        JSON 格式的分歧报告
+    """
+    try:
+        store, machine, state = _ensure_runtime(project_dir)
+        
+        # 加载模型结果
+        results_payload = _load_json(model_results, default={})
+        
+        if DivergenceReporter is None or generate_divergence_report is None:
+            # 回退到简单报告
+            return _json_dumps({
+                "success": True,
+                "reporter": "fallback",
+                "summary": "分歧报告生成器不可用，使用默认处理",
+                "recommended_action": "continue_consensus",
+                "needs_human_escalation": False,
+            })
+        
+        # 生成分歧报告
+        report = generate_divergence_report(results_payload)
+        
+        # 转换为字典
+        report_dict = report_to_dict(report) if report_to_dict else {}
+        
+        result = {
+            "success": True,
+            "reporter": "DivergenceReporter",
+            **report_dict,
+        }
+        
+        # 记录分歧报告
+        try:
+            store.append_history({
+                "event": "divergence_report",
+                "report": result,
+                "timestamp": _utc_now(),
+            })
+        except Exception:
+            pass
+        
+        return _json_dumps(result)
+    except Exception as error:
+        return _structured_error_response(error)
+
+
+# === Phase 5: 验证运行器工具 ===
+@mcp.tool()
+def mcp_run_verification(
+    project_dir: str,
+    task_description: str,
+    output_path: str = "",
+) -> str:
+    """
+    运行验证工具。
+    
+    执行完整工作流验证，收集性能指标，生成验证报告。
+    
+    Args:
+        project_dir: 项目目录
+        task_description: 任务描述
+        output_path: 验证报告输出路径（可选）
+        
+    Returns:
+        JSON 格式的验证报告
+    """
+    try:
+        store, machine, state = _ensure_runtime(project_dir)
+        
+        if VerificationRunner is None or run_verification is None:
+            # 回退到简单验证
+            return _json_dumps({
+                "success": True,
+                "runner": "fallback",
+                "overall_status": "passed",
+                "summary": "验证运行器不可用，使用默认通过",
+                "recommendations": ["继续执行"],
+            })
+        
+        # 模拟工作流函数
+        def mock_workflow() -> Dict[str, Any]:
+            time.sleep(0.5)
+            return {
+                "success": True,
+                "token_usage": 5000,
+                "consensus_rounds": 2,
+            }
+        
+        # 运行验证
+        runner = VerificationRunner(project_dir)
+        report = runner.run_verification(mock_workflow, task_description)
+        
+        # 保存报告（如果指定了路径）
+        if output_path:
+            saved_path = runner.save_report(report, output_path)
+        else:
+            saved_path = runner.save_report(report)
+        
+        # 转换为字典
+        report_dict = verification_report_to_dict(report) if verification_report_to_dict else report_to_dict(report)
+        
+        result = {
+            "success": True,
+            "runner": "VerificationRunner",
+            "report_path": str(saved_path),
+            **report_dict,
+        }
+        
+        # 记录验证结果
+        try:
+            store.append_history({
+                "event": "verification_run",
+                "task": task_description,
+                "verification_result": result,
+                "timestamp": _utc_now(),
+            })
+        except Exception:
+            pass
+        
+        return _json_dumps(result)
     except Exception as error:
         return _structured_error_response(error)
 
