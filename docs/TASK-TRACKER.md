@@ -6,9 +6,30 @@
 |-------|------|--------|---------------|------|
 | Phase 1 | ✅ 完成 | 100% | 5 sessions | 29 tests passed |
 | Phase 2 | ✅ 完成 | 100% | 4 sessions | 98 tests passed |
+| **Phase 2.5** | ✅ 完成 | 100% | - | 多模型框架 (23 tests) |
 | Phase 3 | ⏳ 待开始 | 0% | - | 能力探针和降级 |
 | Phase 4 | ⏳ 待开始 | 0% | - | 分歧报告和人工介入 |
 | Phase 5 | ⏳ 待开始 | 0% | - | 验证和优化 |
+
+## 🏗️ 架构升级
+
+**V2 → V2.5 架构升级：从"双模型"到"多模型"**
+
+| 项目 | 原架构 | 新架构 |
+|------|--------|--------|
+| 模型数量 | 2 (Codex + Qwen) | N (可扩展) |
+| 分发方式 | 手动调用 | `dispatch_consensus()` |
+| 模型选择 | 硬编码 | 能力匹配 + 优先级 |
+| 扩展性 | 改代码 | 配置驱动 |
+
+### 已接入模型
+
+| 模型 | 提供者 | 优先级 | 每日免费额度 |
+|------|--------|--------|-------------|
+| Codex CLI | Codex CLI | 10 (最高) | 无限制 |
+| LongCat Thinking | LongCat | 30 | 500K |
+| LongCat Lite | LongCat | 40 | **50M** |
+| Qwen | OpenRouter | 50 | 500K |
 
 ---
 
@@ -92,10 +113,52 @@ b51aff3 Initial commit: project structure and design specs
 ### 测试结果
 
 ```
-Phase 1: 29 passed
-Phase 2: 69 passed (routing: 22, fuse: 40, mcp: 7)
-Total: 98 passed
+Phase 1:   29 tests (状态机、Schema、共识)
+Phase 2:   69 tests (路由、熔断、MCP工具)
+Phase 2.5: 23 tests (多模型框架)
+LongCat:   22 tests (LongCat客户端)
+Total:     143 tests passed
 ```
+
+---
+
+## Phase 2.5 详情（已完成）
+
+### 多模型共识框架
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ModelRegistry 多模型注册中心                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+任务输入 → ModelRegistry.dispatch_consensus()
+                    ↓
+         ┌─────────┼─────────┬─────────┐
+         │         │         │         │
+       Qwen    LongCat    Codex    新模型...
+         │         │         │         │
+         └─────────┴─────────┴─────────┘
+                       ↓
+              收集所有分析结果
+                       ↓
+              consensus_check()
+                       ↓
+              共识判定 / 继续讨论
+```
+
+### 已创建文件
+
+| 文件 | 行数 | 功能 | 测试覆盖 |
+|------|------|------|----------|
+| src/model_registry.py | ~700 | 多模型注册中心 | ✅ 23 tests |
+| src/longcat_client.py | ~300 | LongCat API 客户端 | ✅ 22 tests |
+
+### 核心功能
+
+- `ModelRegistry.register()` - 注册新模型
+- `ModelRegistry.dispatch_consensus()` - 多模型并行分析
+- `ModelRegistry.select_by_capability()` - 按能力选择模型
+- `ModelRegistry.check_all_health()` - 健康检查
 
 ---
 
@@ -180,5 +243,8 @@ d0d6b32 feat(phase2): add FuseMonitor module for runtime fuse monitoring
 | 2026-04-03 | Phase 2 开始（Qwen编码 + Codex Review） |
 | 2026-04-03 | P2-T1 完成：routing_rules.py (22 tests) |
 | 2026-04-03 | Phase 2 完成：全部6个任务 (98 tests) |
+| 2026-04-03 | LongCat API 接入成功 |
+| 2026-04-03 | **架构升级：多模型共识框架** |
+| 2026-04-03 | Phase 2.5 完成：ModelRegistry (143 tests) |
 | TBD | Phase 2 完成 |
 | TBD | Phase 3-5 开发 |
