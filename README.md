@@ -71,6 +71,18 @@ F:\codex-qwen-pipeline-v2\
 - mcp_capability_probe
 - 降级机制
 
+## 任务跟踪
+
+详细任务进度请查看 [TASK-TRACKER.md](docs/TASK-TRACKER.md)
+
+| Phase | 状态 | 完成度 |
+|-------|------|--------|
+| Phase 1 | ✅ 完成 | 100% |
+| Phase 2 | ⏳ 待开始 | 0% |
+| Phase 3 | ⏳ 待开始 | 0% |
+| Phase 4 | ⏳ 待开始 | 0% |
+| Phase 5 | ⏳ 待开始 | 0% |
+
 ## 环境变量
 
 | 变量 | 必需 | 默认值 | 说明 |
