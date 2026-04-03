@@ -1,0 +1,346 @@
+# Codex-Qwen 协作管道 MCP Server
+# 适用于任何支持 MCP 协议的客户端（Claude Desktop、Cursor、VS Code、WorkBuddy 等）
+#
+# 使用前:
+#   1. pip install openai fastmcp
+#   2. 确保 Node.js 已安装（codex_execute 工具需要）
+#   3. 设置环境变量 OPENROUTER_API_KEY
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from fastmcp import FastMCP
+
+# ── 配置（所有路径通过环境变量覆盖，无硬编码依赖） ──────────────────────
+
+CODEX_NODE_PATH = os.environ.get("CODEX_NODE_PATH", "codex")
+PIPELINE_STATE_DIR = os.environ.get("PIPELINE_STATE_DIR", ".pipeline-state")
+MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "5"))
+CODEX_TIMEOUT = int(os.environ.get("CODEX_TIMEOUT", "600"))
+
+mcp = FastMCP(
+    "codex-qwen-pipeline",
+    instructions=(
+        "Codex-Qwen 编码协作管道。\n\n"
+        "提供 4 个工具：\n"
+        "1. codex_execute - 调用 Codex CLI 执行编码任务\n"
+        "2. qwen_review - 使用 Qwen 审查代码变更（需 OPENROUTER_API_KEY）\n"
+        "3. git_diff - 获取项目 git diff\n"
+        "4. pipeline_status - 查看管道状态\n\n"
+        "典型工作流：codex_execute -> git_diff -> qwen_review -> (不通过则带反馈回到 codex_execute)"
+    ),
+)
+
+
+# ── 辅助函数 ──────────────────────────────────────────────────────────────
+
+def _ensure_state_dir(project_dir: str) -> Path:
+    state_path = Path(project_dir) / PIPELINE_STATE_DIR
+    state_path.mkdir(parents=True, exist_ok=True)
+    return state_path
+
+
+def _init_state(project_dir: str, task: str) -> dict:
+    state_dir = _ensure_state_dir(project_dir)
+    state = {
+        "task_id": f"task-{int(time.time() * 1000)}",
+        "user_request": task,
+        "status": "working",
+        "iteration": 1,
+        "max_iterations": MAX_ITERATIONS,
+        "history": [],
+    }
+    state_file = state_dir / "state.json"
+    with open(state_file, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+    return state
+
+
+def _update_state(project_dir: str, **updates) -> dict:
+    state_dir = Path(project_dir) / PIPELINE_STATE_DIR
+    state_file = state_dir / "state.json"
+    if state_file.exists():
+        with open(state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    else:
+        state = {}
+    state.update(updates)
+    with open(state_file, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+    return state
+
+
+# ── 内嵌审查逻辑（独立于外部文件，单文件即可运行） ──────────────────────
+
+def _qwen_review_internal(diff_content: str, task_description: str, previous_feedback: str = "") -> dict:
+    """调用 Qwen API 审查代码变更"""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    base_url = os.environ.get("QWEN_BASE_URL", "https://openrouter.ai/api/v1")
+    model = os.environ.get("QWEN_MODEL", "qwen/qwen3.6-plus:free")
+    max_tokens = int(os.environ.get("QWEN_MAX_TOKENS", "4096"))
+
+    if not api_key:
+        return {
+            "verdict": "error",
+            "score": 0,
+            "summary": "OPENROUTER_API_KEY 环境变量未设置",
+            "issues": [],
+            "feedback_for_worker": "请设置环境变量 OPENROUTER_API_KEY 后重试",
+        }
+
+    from openai import OpenAI
+
+    REVIEW_SYSTEM_PROMPT = """你是一个严格但务实的代码审查员。审查代码变更（git diff）是否符合任务要求。
+
+以 JSON 格式返回：
+{
+    "verdict": "pass" 或 "needs_changes",
+    "score": 1-10 的整数,
+    "summary": "一句话总结审查结论",
+    "issues": [
+        {"file": "文件路径", "severity": "critical|warning|suggestion", "description": "问题描述", "suggestion": "修复建议"}
+    ],
+    "feedback_for_worker": "给编码代理的具体修复指令（仅当 needs_changes 时填写）"
+}
+
+评判标准：score 1-3 不可用，4-6 需修复，7-8 基本可用，9-10 质量好。
+只有无 critical 问题、warning 不超过 2 个、且 score >= 7 时才返回 "pass"。
+只关注 + 开头的变更行，feedback_for_worker 要具体可操作。
+如果 diff 为空，verdict 设为 "needs_changes"。"""
+
+    client = OpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        default_headers={
+            "HTTP-Referer": "https://mcp-client.local",
+            "X-Title": "Codex-Qwen-Pipeline",
+        },
+    )
+
+    user_message = f"## 原始任务\n{task_description}\n\n## 代码变更 (git diff)\n```diff\n{diff_content}\n```"
+    if previous_feedback:
+        user_message += f"\n\n## 上一轮审查反馈（请检查是否已修复）\n{previous_feedback}"
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=0.15,
+            max_tokens=max_tokens,
+        )
+
+        content = response.choices[0].message.content.strip()
+
+        # 兼容 markdown code block 包裹
+        if content.startswith("```"):
+            lines = content.split("\n")
+            json_lines = []
+            inside = False
+            for line in lines:
+                if line.startswith("```"):
+                    if inside:
+                        break
+                    inside = True
+                    continue
+                if inside:
+                    json_lines.append(line)
+            content = "\n".join(json_lines).strip()
+
+        result = json.loads(content)
+        result.setdefault("verdict", "needs_changes")
+        result.setdefault("score", 5)
+        result.setdefault("summary", "")
+        result.setdefault("issues", [])
+        result.setdefault("feedback_for_worker", "")
+        return result
+
+    except json.JSONDecodeError as e:
+        return {
+            "verdict": "needs_changes",
+            "score": 0,
+            "summary": f"审查结果 JSON 解析失败: {e}",
+            "issues": [],
+            "feedback_for_worker": f"Qwen 原始输出:\n{content}",
+        }
+    except Exception as e:
+        return {
+            "verdict": "error",
+            "score": 0,
+            "summary": f"Qwen API 调用失败: {e}",
+            "issues": [],
+            "feedback_for_worker": str(e),
+        }
+
+
+# ── MCP 工具 ──────────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def codex_execute(
+    task: str,
+    project_dir: str,
+    full_auto: bool = True,
+    feedback: str = "",
+) -> str:
+    """
+    调用 Codex CLI 执行编码任务。
+
+    Args:
+        task: 编码任务描述（完整的、具体的指令）
+        project_dir: 项目根目录的绝对路径（Codex 在此目录下工作）
+        full_auto: 是否全自动执行（允许文件编辑，无需人工确认），默认 true
+        feedback: 上一轮审查的反馈（如有，会拼接到任务描述中）
+
+    Returns:
+        JSON 字符串，包含 success、output、changed_files、error 等字段
+    """
+    full_task = task
+    if feedback:
+        full_task = f"{task}\n\n## 审查反馈（请根据以下反馈修改代码）\n{feedback}"
+
+    if feedback == "":
+        state = _init_state(project_dir, task)
+    else:
+        state = _update_state(project_dir)
+        state["iteration"] = state.get("iteration", 1) + 1
+        _update_state(project_dir, iteration=state["iteration"])
+
+    codex_cmd = ["node", CODEX_NODE_PATH, "exec"]
+    if full_auto:
+        codex_cmd.append("--full-auto")
+    codex_cmd.append(full_task)
+
+    try:
+        result = subprocess.run(
+            codex_cmd,
+            capture_output=True,
+            text=True,
+            cwd=project_dir,
+            timeout=CODEX_TIMEOUT,
+            shell=False,
+        )
+
+        success = result.returncode == 0
+        output = result.stdout or ""
+
+        changed_files = []
+        try:
+            git_result = subprocess.run(
+                ["git", "diff", "--name-only"],
+                capture_output=True,
+                text=True,
+                cwd=project_dir,
+                timeout=30,
+            )
+            if git_result.returncode == 0 and git_result.stdout.strip():
+                changed_files = git_result.stdout.strip().split("\n")
+        except Exception:
+            pass
+
+        response = {
+            "success": success,
+            "output": output[:5000],
+            "changed_files": changed_files,
+            "iteration": state.get("iteration", 1),
+            "error": result.stderr[:2000] if result.stderr else None,
+        }
+
+        _update_state(
+            project_dir,
+            codex_output=output[:2000],
+            changed_files=changed_files,
+            status="completed" if success else "codex_error",
+        )
+
+        return json.dumps(response, ensure_ascii=False)
+
+    except subprocess.TimeoutExpired:
+        _update_state(project_dir, status="timeout")
+        return json.dumps(
+            {"success": False, "output": "", "changed_files": [],
+             "error": f"Codex 执行超时（{CODEX_TIMEOUT}秒）", "iteration": state.get("iteration", 1)},
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        _update_state(project_dir, status="error")
+        return json.dumps(
+            {"success": False, "output": "", "changed_files": [],
+             "error": str(e), "iteration": state.get("iteration", 1)},
+            ensure_ascii=False,
+        )
+
+
+@mcp.tool()
+def qwen_review(
+    diff_content: str,
+    task_description: str,
+    previous_feedback: str = "",
+) -> str:
+    """
+    使用 Qwen API 审查代码变更。
+
+    Args:
+        diff_content: git diff 的完整内容
+        task_description: 原始任务描述（用于评判代码是否符合要求）
+        previous_feedback: 上一轮审查反馈（如有，Qwen 会检查是否已修复）
+
+    Returns:
+        JSON 字符串，包含 verdict（pass/needs_changes）、score（1-10）、issues 等字段
+    """
+    result = _qwen_review_internal(diff_content, task_description, previous_feedback)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool()
+def git_diff(project_dir: str, staged: bool = False) -> str:
+    """
+    获取项目当前的 git diff。
+
+    Args:
+        project_dir: 项目根目录的绝对路径
+        staged: 是否只查看已暂存的变更（git diff --staged），默认 false
+
+    Returns:
+        git diff 的完整文本输出
+    """
+    cmd = ["git", "diff", "--staged"] if staged else ["git", "diff"]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=project_dir, timeout=30,
+        )
+        if result.returncode != 0:
+            return f"git diff 执行失败: {result.stderr}"
+        return result.stdout or "(无代码变更)"
+    except Exception as e:
+        return f"git diff 执行异常: {e}"
+
+
+@mcp.tool()
+def pipeline_status(project_dir: str) -> str:
+    """
+    获取当前管道的执行状态。
+
+    Args:
+        project_dir: 项目根目录的绝对路径
+
+    Returns:
+        JSON 字符串，包含当前管道状态信息
+    """
+    state_file = Path(project_dir) / PIPELINE_STATE_DIR / "state.json"
+    if state_file.exists():
+        with open(state_file, "r", encoding="utf-8") as f:
+            return f.read()
+    return json.dumps({"status": "no_active_pipeline"}, ensure_ascii=False)
+
+
+# ── 启动 ──────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    mcp.run()
